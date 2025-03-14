@@ -1,0 +1,10 @@
+# Configuration Files
+
+This directory contains configuration files for the application.
+
+## API Keys
+
+The application requires API keys to function. To set up:
+
+1. Copy `api_keys.template.json` to `api_keys.json`
+2. Replace the placeholder values with your actual API keys

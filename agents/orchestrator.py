@@ -12,14 +12,40 @@ License: GPL-3.0
 """
 
 import os
+import json
 import logging
-from langchain.llms import OpenAI
+from pathlib import Path
+from langchain_openai import OpenAI
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
+
+def load_api_keys():
+    """
+    Load API keys from configuration file.
+    Looks for config/api_keys.json in the project root directory.
+    """
+    try:
+        config_path = Path(__file__).parent.parent / "config" / "api_keys.json"
+        with open(config_path) as f:
+            keys = json.load(f)
+        return keys
+    except FileNotFoundError:
+        logger.error(
+            "API keys file not found. Please create config/api_keys.json "
+            "using config/api_keys.template.json as a template."
+        )
+        raise
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON in api_keys.json")
+        raise
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Load API keys
+api_keys = load_api_keys()
+os.environ["OPENAI_API_KEY"] = api_keys["openai_api_key"]
 
 def load_prompt(file_path):
     """
@@ -141,6 +167,28 @@ editor_chain = LLMChain(
     output_key="editor_analysis"
 )
 
+def get_user_confirmation(message, options=None):
+    """
+    Get user confirmation with customizable options.
+    
+    Args:
+        message (str): The message to display to the user.
+        options (dict, optional): Dictionary of valid responses mapping to return values.
+                                If None, defaults to yes/no confirmation.
+        
+    Returns:
+        str or bool: Selected option value if options provided, otherwise boolean for yes/no.
+    """
+    if options is None:
+        options = {'y': True, 'yes': True, 'n': False, 'no': False}
+    
+    while True:
+        option_str = f"({'/'.join(k for k in options.keys() if len(k) == 1)})"
+        response = input(f"{message} {option_str}: ").strip().lower()
+        if response in options:
+            return options[response]
+        print(f"Please enter one of: {', '.join(options.keys())}")
+
 def orchestrate_email_response(email_input):
     """
     Orchestrates the processing of an incoming email through a series of agents
@@ -170,26 +218,105 @@ def orchestrate_email_response(email_input):
         needs_response = needs_response_chain.run(summary=summary_result)
         needs_response = needs_response.strip().lower()
         logger.info("Needs response decision: %s", needs_response)
+        
+        # Confirmation point 1: Determining if email needs response
+        needs_response_options = {
+            'y': needs_response,
+            'yes': needs_response,
+            'n': 'respond' if needs_response == 'no response needed' else 'no response needed',
+            'no': 'respond' if needs_response == 'no response needed' else 'no response needed'
+        }
+        confirmed_response = get_user_confirmation(
+            f"The system determined this email {needs_response}. Is this correct?",
+            needs_response_options
+        )
+        if confirmed_response != needs_response:
+            needs_response = confirmed_response
+            logger.info("User overrode needs response decision to: %s", needs_response)
 
         if needs_response == "no response needed":
-            return "No response needed."
+            if get_user_confirmation("Confirm to end process with 'No response needed'?"):
+                return "No response needed."
+            else:
+                needs_response = "respond"
+                logger.info("User chose to continue process and respond")
 
         logger.info("Categorizing the email for potential decline.")
         categorizer_decision = categorizer_chain.run(email_content=summary_result)
         categorizer_decision = categorizer_decision.strip().lower()
         logger.info("Email categorizer decision: %s", categorizer_decision)
+        
+        # Confirmation point 2: Categorizing the email
+        categorizer_options = {
+            'y': categorizer_decision,
+            'yes': categorizer_decision,
+            'decline': 'decline',
+            'accept': 'accept'
+        }
+        confirmed_category = get_user_confirmation(
+            f"The system categorized this as: '{categorizer_decision}'. Select 'y' to confirm, or choose 'decline'/'accept' to override:",
+            categorizer_options
+        )
+        if confirmed_category != categorizer_decision:
+            categorizer_decision = confirmed_category
+            logger.info("User overrode categorizer decision to: %s", categorizer_decision)
 
         if categorizer_decision == "decline":
-            final_response = decline_writer_chain.run(email_content=email_input.get("email_content", ""))
-        else:
+            decline_response = decline_writer_chain.run(email_content=email_input.get("email_content", ""))
+            print("\nProposed Decline Response:")
+            print(decline_response)
+            
+            # Confirmation point 3: Drafting of a decline email
+            if get_user_confirmation("Do you approve this decline response?"):
+                final_response = decline_response
+            else:
+                if get_user_confirmation("Would you like to recategorize as 'accept' instead of stopping?"):
+                    categorizer_decision = "accept"
+                    logger.info("User chose to recategorize as accept")
+                else:
+                    return "Process stopped: Decline response rejected by user."
+        
+        if categorizer_decision != "decline":
             logger.info("Determining if the email is solely a scheduling request.")
             meeting_decision = meeting_request_decider_chain.run(email_content=email_input.get("email_content", ""))
             meeting_decision = meeting_decision.strip().lower()
             logger.info("Meeting request decision: %s", meeting_decision)
+            
+            # Confirmation point 4: Determining email type
+            meeting_options = {
+                'y': meeting_decision,
+                'yes': meeting_decision,
+                'schedule': 'schedule meeting',
+                'regular': 'regular email'
+            }
+            confirmed_type = get_user_confirmation(
+                f"The system classified this as: '{meeting_decision}'. Select 'y' to confirm, or choose 'schedule'/'regular' to override:",
+                meeting_options
+            )
+            if confirmed_type != meeting_decision:
+                meeting_decision = confirmed_type
+                logger.info("User overrode meeting decision to: %s", meeting_decision)
+
             if meeting_decision == "schedule meeting":
-                final_response = schedule_email_writer_chain.run(email_content=email_input.get("email_content", ""))
+                schedule_response = schedule_email_writer_chain.run(email_content=email_input.get("email_content", ""))
+                print("\nProposed Schedule Response:")
+                print(schedule_response)
+                
+                # Confirmation point 5: After drafting a scheduling email
+                if get_user_confirmation("Do you approve this scheduling response?"):
+                    final_response = schedule_response
+                else:
+                    return "Process stopped: Schedule response rejected by user."
             else:
-                final_response = email_writer_chain.run(email_content=email_input.get("email_content", ""))
+                email_response = email_writer_chain.run(email_content=email_input.get("email_content", ""))
+                print("\nProposed Email Response:")
+                print(email_response)
+                
+                # Confirmation point 6: After drafting a response email
+                if get_user_confirmation("Do you approve this email response?"):
+                    final_response = email_response
+                else:
+                    return "Process stopped: Email response rejected by user."
 
         # Check if a user-edited version exists and analyze differences.
         if "edited_email" in email_input and email_input["edited_email"].strip():
