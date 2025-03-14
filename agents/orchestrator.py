@@ -12,52 +12,15 @@ License: GPL-3.0
 """
 
 import os
-<<<<<<< HEAD
-import json
-import logging
-from pathlib import Path
-from langchain_openai import OpenAI
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
-
-def load_api_keys():
-    """
-    Load API keys from configuration file.
-    Looks for config/api_keys.json in the project root directory.
-    """
-    try:
-        config_path = Path(__file__).parent.parent / "config" / "api_keys.json"
-        with open(config_path) as f:
-            keys = json.load(f)
-        return keys
-    except FileNotFoundError:
-        logger.error(
-            "API keys file not found. Please create config/api_keys.json "
-            "using config/api_keys.template.json as a template."
-        )
-        raise
-    except json.JSONDecodeError:
-        logger.error("Invalid JSON in api_keys.json")
-        raise
-
-=======
 import logging
 from langchain.llms import OpenAI
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 
->>>>>>> bf2e9ca4b026d495640607c8178908b1400c56c5
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-<<<<<<< HEAD
-# Load API keys
-api_keys = load_api_keys()
-os.environ["OPENAI_API_KEY"] = api_keys["openai_api_key"]
-
-=======
->>>>>>> bf2e9ca4b026d495640607c8178908b1400c56c5
 def load_prompt(file_path):
     """
     Load a prompt from a text file.
