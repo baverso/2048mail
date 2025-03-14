@@ -179,4 +179,7 @@ config/*.json
 config/*.yaml
 config/*.yml
 config/*.env
+<<<<<<< HEAD
 config/
+=======
+>>>>>>> a66f77e (updated config with openai api key)
