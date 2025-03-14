@@ -2,7 +2,10 @@
 __pycache__/
 *.py[cod]
 *$py.class
+<<<<<<< HEAD
 *.DS_Store
+=======
+>>>>>>> bf2e9ca4b026d495640607c8178908b1400c56c5
 
 # C extensions
 *.so
@@ -173,6 +176,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+<<<<<<< HEAD
 
 config/api_keys.json
 config/*.json
@@ -183,3 +187,5 @@ config/*.env
 config/
 =======
 >>>>>>> a66f77e (updated config with openai api key)
+=======
+>>>>>>> bf2e9ca4b026d495640607c8178908b1400c56c5
