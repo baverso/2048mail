@@ -141,7 +141,6 @@ editor_chain = LLMChain(
     output_key="editor_analysis"
 )
 
-<<<<<<< HEAD
 def get_user_confirmation(message, options=None):
     """
     Get user confirmation with customizable options.
@@ -164,8 +163,6 @@ def get_user_confirmation(message, options=None):
             return options[response]
         print(f"Please enter one of: {', '.join(options.keys())}")
 
-=======
->>>>>>> bf2e9ca4b026d495640607c8178908b1400c56c5
 def orchestrate_email_response(email_input):
     """
     Orchestrates the processing of an incoming email through a series of agents
@@ -195,7 +192,6 @@ def orchestrate_email_response(email_input):
         needs_response = needs_response_chain.run(summary=summary_result)
         needs_response = needs_response.strip().lower()
         logger.info("Needs response decision: %s", needs_response)
-<<<<<<< HEAD
         
         # Confirmation point 1: Determining if email needs response
         needs_response_options = {
@@ -218,17 +214,14 @@ def orchestrate_email_response(email_input):
             else:
                 needs_response = "respond"
                 logger.info("User chose to continue process and respond")
-=======
 
         if needs_response == "no response needed":
             return "No response needed."
->>>>>>> bf2e9ca4b026d495640607c8178908b1400c56c5
 
         logger.info("Categorizing the email for potential decline.")
         categorizer_decision = categorizer_chain.run(email_content=summary_result)
         categorizer_decision = categorizer_decision.strip().lower()
         logger.info("Email categorizer decision: %s", categorizer_decision)
-<<<<<<< HEAD
         
         # Confirmation point 2: Categorizing the email
         categorizer_options = {
@@ -261,17 +254,14 @@ def orchestrate_email_response(email_input):
                     return "Process stopped: Decline response rejected by user."
         
         if categorizer_decision != "decline":
-=======
 
         if categorizer_decision == "decline":
             final_response = decline_writer_chain.run(email_content=email_input.get("email_content", ""))
         else:
->>>>>>> bf2e9ca4b026d495640607c8178908b1400c56c5
             logger.info("Determining if the email is solely a scheduling request.")
             meeting_decision = meeting_request_decider_chain.run(email_content=email_input.get("email_content", ""))
             meeting_decision = meeting_decision.strip().lower()
             logger.info("Meeting request decision: %s", meeting_decision)
-<<<<<<< HEAD
             
             # Confirmation point 4: Determining email type
             meeting_options = {
@@ -308,12 +298,10 @@ def orchestrate_email_response(email_input):
                     final_response = email_response
                 else:
                     return "Process stopped: Email response rejected by user."
-=======
             if meeting_decision == "schedule meeting":
                 final_response = schedule_email_writer_chain.run(email_content=email_input.get("email_content", ""))
             else:
                 final_response = email_writer_chain.run(email_content=email_input.get("email_content", ""))
->>>>>>> bf2e9ca4b026d495640607c8178908b1400c56c5
 
         # Check if a user-edited version exists and analyze differences.
         if "edited_email" in email_input and email_input["edited_email"].strip():
