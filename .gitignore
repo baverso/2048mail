@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.DS_Store
 
 # C extensions
 *.so
@@ -178,4 +179,5 @@ config/*.json
 config/*.yaml
 config/*.yml
 config/*.env
+config/*.pickle
 config/

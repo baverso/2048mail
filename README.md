@@ -16,16 +16,29 @@ MailMaestroAI/
 ├── requirements.txt    # Python dependencies
 └── tools               # Utility scripts or tools not directly part of the agent chain
 ```
-## Setup
+
+## Installation
+
+There are two ways to install 2048mail:
+
+### 1. Using pip (Recommended)
+
+```bash
+pip install -e .
+```
+
+This will install the package in development mode with all required dependencies.
+
+### 2. Manual Installation
 
 1. **Clone the Repository:**
     ```bash
     git clone <repository-url>
-    cd MailMaestroAI
+    cd 2048mail
     ```
 
 2. **Set Up the Environment:**
-    - Ensure you are using Python 3.10.
+    - Ensure you are using Python 3.9 or higher
     - Create and activate a virtual environment:
       ```bash
       python3 -m venv env
@@ -36,9 +49,35 @@ MailMaestroAI/
       pip install -r requirements.txt
       ```
 
-3. **Configure the Project:**
-    - Place your Gmail API credentials in `config/credentials.json`.
-    - Update `config/settings.json` with your OpenAI API key and any other necessary configuration settings.
+## Configuration
+
+1. **Gmail API Setup:**
+    - Place your Gmail API credentials in `config/credentials.json`
+    - Run the initial setup to authenticate:
+      ```bash
+      python -m libs.google_oauth
+      ```
+
+2. **Environment Variables:**
+    - Copy the example environment file:
+      ```bash
+      cp .env.example .env
+      ```
+    - Update `.env` with your API keys and settings
+
+## Development Setup
+
+For development work, install additional dependencies:
+
+```bash
+pip install -r requirements.txt[dev]
+```
+
+This includes:
+- pytest for testing
+- black for code formatting
+- flake8 for linting
+- mypy for type checking
 
 ## Pipeline Overview
 
