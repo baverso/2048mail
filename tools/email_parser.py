@@ -25,7 +25,7 @@ class EmailParser:
     def __init__(self, service) -> None:
         self.service = service
 
-    def parse_thread(self, thread: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def parse_thread(self, thread: Dict[str, Any]) -> tuple[List[Dict[str, Any]], Dict[str, str]]:
         """
         Parses a single email thread into structured email data.
 
@@ -33,11 +33,12 @@ class EmailParser:
             thread (dict): A raw email thread from the Gmail API.
 
         Returns:
-            list: List of flattened email message dictionaries containing message data
+            tuple: (List of flattened email message dictionaries, Dictionary of full content by message ID)
         """
         email_messages = thread.get("messages", [])
         thread_id = thread.get("thread_id")
         flattened_messages = []
+        full_content_store = {}
         
         for idx, msg in enumerate(email_messages, start=1):
             try:
@@ -69,10 +70,17 @@ class EmailParser:
                     logger.error("Extraction Error: Empty email content for message %s", message_id)
                     continue
 
+                # Store full content separately with identifiers
+                full_content_store[message_id] = {
+                    "threadId": thread_id,
+                    "messageId": message_id,
+                    "full_content": cleaned_content
+                }
+
                 # Parse the email content using EmailReplyParser
                 parsed = EmailReplyParser().parse_reply(cleaned_content)
                 message_data['reply'] = parsed
-                message_data['full_content'] = cleaned_content
+                # message_data['full_content'] = cleaned_content # Keeping this commented out as requested
                 
                 # Add message_data to flattened structure
                 flattened_message["message_data"] = message_data
@@ -81,9 +89,9 @@ class EmailParser:
                 logger.error("Error processing message: %s", e)
                 continue
         
-        return flattened_messages
+        return flattened_messages, full_content_store
 
-    def parse_emails(self, threads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def parse_emails(self, threads: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         Parses a list of raw email threads into a flattened list structure.
 
@@ -91,14 +99,16 @@ class EmailParser:
             threads (list): List of raw email threads.
 
         Returns:
-            list: A flat list of structured email message entries.
+            tuple: (A flat list of structured email message entries, Dictionary of full content by message ID)
         """
         flattened_batch = []
+        all_full_content = {}
         for thread in threads:
-            parsed_messages = self.parse_thread(thread)
+            parsed_messages, full_content = self.parse_thread(thread)
             if parsed_messages:
                 flattened_batch.extend(parsed_messages)
-        return flattened_batch
+            all_full_content.update(full_content)
+        return flattened_batch, all_full_content
 
 if __name__ == "__main__":
     # This test code assumes you have already set up the Gmail service.
@@ -112,11 +122,14 @@ if __name__ == "__main__":
     from tools.email_retriever import EmailRetriever
     retriever = EmailRetriever()
     threads = retriever.retrieve_emails(n=5)
-    structured_data = parser.parse_emails(threads)
+    structured_data, full_content = parser.parse_emails(threads)
     # alternatively, you can use the following dummy threads list
     # dummy_threads = [{'thread_id': '19595d4124a5ed7d', 'messages': [{'threadId': '19595d4124a5ed7d', 'messageId': '19595d4124a5ed7d', 'order': 1}]}, {'thread_id': '1944832a4832b486', 'messages': [{'threadId': '1944832a4832b486', 'messageId': '195928f7b42b1d0f', 'order': 1}, {'threadId': '1944832a4832b486', 'messageId': '1959096417e30054', 'order': 2}, {'threadId': '1944832a4832b486', 'messageId': '1958c13058ab4e15', 'order': 3}]}, {'thread_id': '19592086ef9f234a', 'messages': [{'threadId': '19592086ef9f234a', 'messageId': '195928dd57108a21', 'order': 1}, {'threadId': '19592086ef9f234a', 'messageId': '19592086ef9f234a', 'order': 2}]}, {'thread_id': '195868b24ba8e680', 'messages': [{'threadId': '195868b24ba8e680', 'messageId': '195912dc4132dcf8', 'order': 1}]}, {'thread_id': '1958ff330f5cd299', 'messages': [{'threadId': '1958ff330f5cd299', 'messageId': '1958ff330f5cd299', 'order': 1}]}]  # Replace with actual threads
-    # structured_data = parser.parse_emails(dummy_threads)
+    # structured_data, _ = parser.parse_emails(dummy_threads)
     
     print("Structured Email Data:")
     import pprint
-    pprint.pprint(structured_data)
+    # pprint.pprint(structured_data)
+
+    print("\nFull Content Store:")
+    pprint.pprint(full_content)

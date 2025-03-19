@@ -16,6 +16,7 @@ from typing import List, Dict, Any
 from googleapiclient.discovery import build
 from libs.google_oauth import get_gmail_credentials
 from tools.check_email import get_last_n_emails
+import time
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -86,10 +87,11 @@ if __name__ == "__main__":
         for thread in threads:
             if thread.get("messages"):
                 first_message_id = thread["messages"][0].get("messageId")
+                time.sleep(1)
                 if first_message_id:
                     message = retriever.retrieve_email_message(first_message_id)
-                    # print("Retrieved message (full):")
                     print(message.get('threadId'))
                     print(message.get('id'))
                     print(message.get('snippet'))
+                    print(message.get('labelIds'))
                     print('--------------------------------')

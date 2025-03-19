@@ -223,13 +223,17 @@ def orchestrate_email_response():
         structured_emails = parser.parse_emails(threads)
         
         # Filter for the most recent emails (order=1)
-        recent_emails = [email for email in structured_emails if email.get('order') == 1]
+        # recent_emails = [email for email in structured_emails if email.get('order') == 1]
+        recent_emails = [email for email in structured_emails if email.get('order') in [1, 2, 3]]
+
         
         # Check if we have any emails to process
         if not recent_emails:
-            logger.info("No recent emails (order=1) found to process.")
+            logger.info("No recent emails (order=1, 2, 3) found to process.")
             return "No emails to process."
         
+        import pprint
+        pprint.pprint(recent_emails)
         # Process the first recent email
         email_data = recent_emails[0]
         

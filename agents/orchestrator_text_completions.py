@@ -14,6 +14,7 @@ License: GPL-3.0
 import os
 import json
 import logging
+import tiktoken  # Import tiktoken for token counting
 
 from langchain_openai import OpenAI
 from langchain_core.prompts import PromptTemplate
@@ -25,7 +26,8 @@ from tools.email_retriever import EmailRetriever
 from tools.email_parser import EmailParser
 from libs.api_manager import setup_openai_api
 from tools.human_feedback import get_yes_no_feedback
-from tools.email_archiver import archive_email
+from tools.email_label_remover import remove_email_label
+from tools.email_labeler import *
 
 # Import Pydantic models. Writers do not get Pydantic models.
 from agents.models import (
@@ -36,16 +38,47 @@ from agents.models import (
     EditorAnalysisOutput
 )
 
+from email.mime.text import MIMEText
+import base64
+
 # Silence all loggers
-logging.getLogger().setLevel(logging.ERROR)  # Root logger configuration
+# logging.getLogger().setLevel(logging.ERROR)  # Root logger configuration
 # Or to completely disable all logging:
 # logging.disable(logging.CRITICAL)
 
 # Configure logging
+logging.basicConfig(level=logging.INFO)  # Set up basic configuration first
 logger = logging.getLogger(__name__)
 
 # Load API keys and set up OpenAI API
 setup_openai_api()
+
+MODEL_NAME = "gpt-3.5-turbo-instruct"
+# MODEL_NAME = "gpt-4-turbo"
+
+
+# Function to count tokens
+def num_tokens_from_string(string, model=MODEL_NAME):
+    """Returns the number of tokens in a text string."""
+    encoding = tiktoken.encoding_for_model(model)
+    num_tokens = len(encoding.encode(string))
+    return num_tokens
+
+# Function to truncate text to fit within token limit
+def truncate_to_token_limit(text, max_tokens=3000, model=MODEL_NAME):
+    """Truncates text to fit within token limit."""
+    if num_tokens_from_string(text, model) <= max_tokens:
+        return text
+    
+    # If over limit, truncate
+    encoding = tiktoken.encoding_for_model(model)
+    encoded = encoding.encode(text)
+    truncated = encoded[:max_tokens]
+    
+    # Add a note about truncation
+    truncated_text = encoding.decode(truncated)
+    logging.info("Truncated text: %s", truncated_text)
+    return truncated_text + "\n\n[Note: Email was truncated due to length.]"
 
 # =====================
 # Load Agent Prompts
@@ -77,9 +110,7 @@ def load_prompt(file_path):
 # Directory containing prompt files
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "prompts")
 
-# =====================
-# Load Agent Prompts
-# =====================
+
 summarizer_prompt_text = load_prompt(os.path.join(PROMPTS_DIR, "email_summarizer_prompt.txt"))
 needs_response_prompt_text = load_prompt(os.path.join(PROMPTS_DIR, "email_needs_response_prompt.txt"))
 categorizer_prompt_text = load_prompt(os.path.join(PROMPTS_DIR, "email_categorizer_prompt.txt"))
@@ -95,7 +126,7 @@ editor_prompt_text = load_prompt(os.path.join(PROMPTS_DIR, "email_editor_agent_p
 # =====================
 
 # Create base models with different capabilities
-base_model = OpenAI(temperature=0, model="gpt-3.5-turbo-instruct")
+base_model = OpenAI(temperature=0, model=MODEL_NAME, max_tokens=256)
 
 # Create a JSON output parser for each Pydantic model
 summarizer_parser = JsonOutputParser(pydantic_object=EmailSummaryOutput)
@@ -171,6 +202,66 @@ editor_prompt = PromptTemplate(
 )
 editor_chain = editor_prompt | base_model | editor_fixing_parser  # Using reasoning_model
 
+import base64
+import re
+import logging
+from email.mime.text import MIMEText
+from tools.text_cleaner import clean_text
+
+logger = logging.getLogger(__name__)
+
+def create_draft(service, message_text, to, subject, thread_id=None, from_email=None):
+    """
+    Create a draft email in Gmail, optionally associating it with an existing thread.
+    
+    Args:
+        service: The Gmail API service instance.
+        message_text: The body of the email (including the email chain if desired).
+        to: The recipient's email address.
+        subject: The subject of the email.
+        thread_id: The Gmail threadId to associate this draft with (optional).
+        from_email: The sender's email address (optional).
+        
+    Returns:
+        The created draft object.
+    """
+    try:
+        # Create a MIMEText message with the email body (including email chain)
+        message = MIMEText(message_text)
+        message['to'] = to
+        message['subject'] = subject
+        if from_email:
+            message['from'] = from_email
+        
+        # Optionally, include headers that help indicate the message is part of a thread.
+        if thread_id:
+            # Although threadId is sent in the API request, it may be useful to add an
+            # "In-Reply-To" header if you have the original message-id.
+            message['In-Reply-To'] = thread_id
+
+        # Encode the message
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        
+        # Build the request body with the optional threadId included
+        body = {
+            'message': {
+                'raw': raw_message
+            }
+        }
+        if thread_id:
+            body['message']['threadId'] = thread_id
+        
+        # Create the draft using the Gmail API
+        draft = service.users().drafts().create(
+            userId='me',
+            body=body
+        ).execute()
+        
+        logger.info("Draft created successfully with ID: %s", draft['id'])
+        return draft
+    except Exception as error:
+        logger.error("An error occurred while creating the draft: %s", error)
+        raise
 
 def orchestrate_email_response():
     """
@@ -189,7 +280,7 @@ def orchestrate_email_response():
 
         # Parse raw emails using EmailParser.
         parser = EmailParser(retriever.service)
-        structured_emails = parser.parse_emails(threads)
+        structured_emails, full_content = parser.parse_emails(threads) # TODO: leverage full_content for RAG
         
         # Filter for the most recent emails (order=1)
         recent_emails = [email for email in structured_emails if email.get('order') == 1]
@@ -198,9 +289,6 @@ def orchestrate_email_response():
         if not recent_emails:
             logger.info("No recent emails (order=1) found to process.")
             return "No emails to process."
-        
-        # Create a list to store responses for all processed emails
-        all_responses = []
         
         # Process each recent email
         for i, email_data in enumerate(recent_emails):
@@ -215,8 +303,10 @@ def orchestrate_email_response():
             message_id = email_data.get('messageId')
             
             logger.info("Starting email summarization.")
-            # Convert message_data to JSON string for the LLM
+            # Convert message_data to JSON string for the LLM and truncate if needed
             email_content_input = json.dumps(message_data)
+            # Truncate to fit within token limits
+            email_content_input = truncate_to_token_limit(email_content_input, 3000)
             
             # Use the chain directly - now returns a JSON dictionary
             summary_result = summarizer_chain.invoke({"email_content": email_content_input})
@@ -244,20 +334,24 @@ def orchestrate_email_response():
             elif needs_response == "respond" and not is_correct:
                 # AI decided to respond but human disagrees
                 logger.info("Human overrode AI decision to respond. No response will be sent.")
+                # Apply the NO RESPONSE NEEDED label to the email
+                apply_q_no_response_needed_label(retriever.service, message_id)
                 # Archive the email by removing INBOX label and adding NO RESPONSE NEEDED label
-                if message_id:
-                    logger.info("Archiving email with message ID: %s", message_id)
-                    archive_email(retriever.service, message_id)
+                logger.info("Archiving email with message ID: %s", message_id)
+                remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
+                apply_q_archive_label(retriever.service, message_id)    
                 print("Human decided no response is needed. Email archived.")
                 continue
             elif needs_response == "no response needed" and is_correct:
                 # AI decided not to respond and human agrees
                 logger.info("Human confirmed AI decision not to respond.")
+                # Apply the NO RESPONSE NEEDED label to the email
+                apply_q_no_response_needed_label(retriever.service, message_id)
                 # Archive the email by removing INBOX label and adding NO RESPONSE NEEDED label
-                if message_id:
-                    logger.info("Archiving email with message ID: %s", message_id)
-                    archive_email(retriever.service, message_id)
-                print("No response needed. Email archived.")
+                logger.info("Archiving email with message ID: %s", message_id)
+                remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
+                apply_q_archive_label(retriever.service, message_id)    
+                print("Human decided no response is needed. Email archived.")
                 continue
             elif needs_response == "no response needed" and not is_correct:
                 # AI decided not to respond but human disagrees
@@ -266,6 +360,7 @@ def orchestrate_email_response():
             
             # If we reach here, we need to generate a response (either AI decided or human overrode)
             logger.info("Categorizing the email.")
+
             # Get structured output from the JSON parser
             category_output = categorizer_chain.invoke({"email_content": email_content_input})
             category = category_output["decision"]
@@ -283,6 +378,22 @@ def orchestrate_email_response():
                 # Categorizer decided to decline and human agrees
                 logger.info("Human confirmed decision to decline. Moving to decline email agent.")
                 final_response = decline_writer_chain.invoke({"email_content": email_content_input})
+                # Apply the DECLINE label to the email
+                apply_q_decline_label(retriever.service, message_id)
+                # Apply the Q_DRAFT label to the email
+                apply_q_draft_label(retriever.service, message_id)
+                # Archive the email by removing INBOX label and adding DECLINE label
+                logger.info("Archiving email with message ID: %s", message_id)
+                remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
+                apply_q_archive_label(retriever.service, message_id)    
+                print("Human decided to decline. Email archived.")
+                # Extract recipient email from the message_data
+                recipient_email = message_data.get('from', {})
+                subject = "Re: " + message_data.get('subject', '')
+                # Create a draft with the response
+                create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
+                print(f"Decline email drafted {final_response}. Check your drafts folder to edit before sending.")
+                continue
             elif category == "decline" and not is_category_correct:
                 # Categorizer decided to decline but human disagrees
                 logger.info("Human overrode decision to decline. Updating to move forward.")
@@ -301,18 +412,20 @@ def orchestrate_email_response():
                 category = "decline"
                 logger.info("Moving to decline email agent.")
                 final_response = decline_writer_chain.invoke({"email_content": email_content_input})
+                # Extract recipient email from the message_data
+                recipient_email = message_data.get('from', {})
+                subject = "Re: " + message_data.get('subject', '')
+                # Create a draft with the response
+                create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
+                print(f"Decline email drafted {final_response}. Check your drafts folder to edit before sending.")
+                # Apply the DECLINE label to the email
+                apply_q_decline_label(retriever.service, message_id)
             
             # If we reach here, we need to proceed to the meeting request decider
             if category != "decline":
                 logger.info("Determining if the email is solely a scheduling request.")
                     
-                # Get structured output from the JSON parser
-                import pprint
-                print('--------------------------------')
-                print('--------------------------------')
-                pprint.pprint(email_content_input)
-                print('--------------------------------')
-                print('--------------------------------')                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+                # Get structured output from the JSON parser                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
                 meeting_output = meeting_request_decider_chain.invoke({"email_content": email_content_input})
                 is_meeting_request = meeting_output["decision"]
                 logger.info("Meeting request decision: %s", is_meeting_request)
@@ -330,55 +443,32 @@ def orchestrate_email_response():
                     logger.info(f"Human corrected meeting request decision to: {is_meeting_request}")
                 
                 if is_meeting_request in ["yes", "true", "1"]:
+                    # Apply the SCHEDULE label to the email
+                    apply_q_schedule_meeting_label(retriever.service, message_id)
                     final_response = schedule_email_writer_chain.invoke({"email_content": email_content_input})
-
-                else:
-                    final_response = email_writer_chain.invoke({"email_content": email_content_input})
-
-            # Optionally, if human-edited feedback is provided, analyze differences.
-            if "edited_email" in message_data and message_data["edited_email"].strip():
-                editor_analysis = editor_chain.invoke({
-                    "draft_email": final_response,
-                    "edited_email": message_data["edited_email"]
-                })
-                
-                # Editor analysis is now a JSON dictionary
-                response = {
-                    "final_response": final_response,
-                    "editor_analysis": editor_analysis
-                }
-            else:
-                # Ask if the user wants to edit the response
-                wants_to_edit, _ = get_yes_no_feedback(
-                    prompt="Would you like to edit this response before sending?",
-                    context=f"Generated response:\n{final_response}"
-                )
-                
-                if wants_to_edit:
-                    print("\nPlease edit the response below:")
-                    print("-" * 50)
-                    print(final_response)
-                    print("-" * 50)
-                    edited_response = input("Enter your edited response (or press Enter to keep as is):\n")
                     
-                    if edited_response.strip():
-                        # If user provided an edited response, analyze the differences
-                        editor_analysis = editor_chain.invoke({
-                            "draft_email": final_response,
-                            "edited_email": edited_response
-                        })
-                        
-                        response = {
-                            "final_response": edited_response,
-                            "editor_analysis": editor_analysis
-                        }
-                
-            # Instead of returning, append the response to all_responses
-            # Add the response to all_responses
-            all_responses.append(response)
-            
-        # Return all collected responses
-        return all_responses if len(all_responses) > 0 else "No responses generated."
+                    # Extract recipient email from the message_data
+                    recipient_email = message_data.get('from', {})
+                    subject = "Re: " + message_data.get('subject', '')
+                    
+                    # Create a draft with the response
+                    create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
+                    print(f"Schedule-a-meeting email drafted {final_response}. Check your drafts folder to edit before sending.")
+                    remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
+                    
+                else:
+                    # Apply the EMAIL label to the email
+                    apply_q_response_needed_label(retriever.service, message_id)
+                    final_response = email_writer_chain.invoke({"email_content": email_content_input})
+                    
+                    # Extract recipient email from the message_data
+                    recipient_email = message_data.get('from', {})
+                    subject = "Re: " + message_data.get('subject', '')
+                    
+                    # Create a draft with the response
+                    create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
+                    print(f"Response email drafted {final_response}. Check your drafts folder to edit before sending.")
+                    remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
 
 
     except Exception as e:
