@@ -1,11 +1,11 @@
-# 2048mail
+# Quillo
 
-2048mail is an automated email responder agent that leverages OpenAI's API, the Gmail API, and LangChain to analyze, categorize, and generate responses for incoming emails. The agent orchestrates a sequential pipeline using LangChain's **SequentialChain**, integrating multiple tasks such as summarizing emails, determining if a response is needed, categorizing emails, and drafting responses. It also employs memory modules to maintain historical email context and a vector database (e.g., Pinecone) for contextual retrieval via semantic search.
+Quillo is an automated email responder agent that leverages OpenAI's API, the Gmail API, and LangChain to analyze, categorize, and generate responses for incoming emails. The agent orchestrates a sequential pipeline using LangChain's **SequentialChain**, integrating multiple tasks such as summarizing emails, determining if a response is needed, categorizing emails, and drafting responses. It also employs memory modules to maintain historical email context and a vector database (e.g., Pinecone) for contextual retrieval via semantic search.
 
 ## Project Structure
 
 ```
-MailMaestroAI/
+root/
 ├── README.md           # Project documentation and setup instructions
 ├── agents              # Scripts for agents (sequential chain implementations, etc.)
 ├── config              # Credentials for the Gmail API and OpenAI API
@@ -19,7 +19,7 @@ MailMaestroAI/
 
 ## Installation
 
-There are two ways to install 2048mail:
+There are two ways to install Quillo:
 
 ### 1. Using pip (Recommended)
 
@@ -34,7 +34,7 @@ This will install the package in development mode with all required dependencies
 1. **Clone the Repository:**
     ```bash
     git clone <repository-url>
-    cd 2048mail
+    cd Quillo
     ```
 
 2. **Set Up the Environment:**
