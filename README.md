@@ -82,7 +82,7 @@ This includes:
 
 ## Pipeline Overview
 
-MailMaestroAI uses LangChain's **SequentialChain** to construct a unified pipeline that processes incoming emails through a series of steps:
+QuilloAI uses LangChain's **SequentialChain** to construct a unified pipeline that processes incoming emails through a series of steps:
 
 1. **Email Summarizer:** Summarizes the email content and extracts key points.
 2. **Email Analyzer:** Determines whether the email requires a response.
@@ -97,7 +97,7 @@ The pipeline integrates memory modules to preserve context from previous email t
 
 ## Vector Database for Contextual Retrieval
 
-MailMaestroAI utilizes a vector database (such as Pinecone) to store embeddings of email content. This semantic search capability enables the system to retrieve relevant past emails or interactions based on the underlying meaning of the text, rather than relying solely on keyword matching.
+QuilloAI utilizes a vector database (such as Pinecone) to store embeddings of email content. This semantic search capability enables the system to retrieve relevant past emails or interactions based on the underlying meaning of the text, rather than relying solely on keyword matching.
 
 ## Running the Email Responder Agent
 
