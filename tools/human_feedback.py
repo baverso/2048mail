@@ -15,12 +15,12 @@ import pprint
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def get_yes_no_feedback(prompt, decision=None, context=None):
+def get_yes_no_feedback(prompt=None, decision=None, context=None):
     """
     Get yes/no feedback from a human user.
     
     Args:
-        prompt (str): The question to ask the user.
+        prompt (str, optional): The question to ask the user.
         decision (str, optional): The AI's decision that is being validated.
         context (str or object, optional): Additional context to display to the user.
         
@@ -29,33 +29,44 @@ def get_yes_no_feedback(prompt, decision=None, context=None):
             - is_correct (bool): True if the human agrees with the AI decision, False otherwise.
             - human_input (str): The raw input from the human ('y' or 'n').
     """
+    if prompt is None:
+        if decision == "respond":
+                prompt = "I think we should respond."
+        elif decision == "no response needed":
+            prompt = "This email does not need a response."
+        elif decision == "decline":
+            prompt = "I think we should politely decline."
+        elif decision == "move forward":
+            prompt = "I think we should draft a response."
+        elif decision == "schedule meeting":
+            prompt = "I think we should setup a meeting."
+        elif decision == "other email":
+            prompt = "Placeholder for binary questions here." # TODO: Add binary questions here.
+        else:
+            raise ValueError(f"Invalid needs_response decision: {decision}")
+    
 
     # Display context if provided
     if context:
         if isinstance(context, dict):
             for key, value in context.items():
                 if isinstance(value, list):
-                    print(f"{key}:\n")
-                    [print('    ',i) for i in value]
+                    print(f"{key}:")
+                    [print('    \n',i) for i in value]
                 else:
                     print(f"{key}: {value}")
         else:
             print(context)
-        
-    
-    # Display AI decision if provided
-    if decision:
-        print(f"AI Decision: {decision}")
     
     # Get human input
     while True:
-        human_input = input(f"{prompt} (y/n): ").strip().lower()
-        if human_input in ['y', 'n']:
+        human_input = input(f"\n\nHUMAN FEEDBACK REQUESTED:\n{prompt} Wrong \U0001F44E Correct\U0001F44D (please reply with 'correct' or 'wrong')").strip().lower()
+        if human_input in ['correct', 'wrong']:
             break
-        print("Please enter 'y' for yes or 'n' for no.")
+        print("Please enter 'correct' or 'wrong'.")
     
     # Log the feedback
-    is_correct = human_input == 'y'
+    is_correct = human_input == 'correct'
     if decision:
         if is_correct:
             logger.info(f"Human confirmed AI decision: {decision}")
