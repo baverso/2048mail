@@ -1,7 +1,7 @@
 # Quillo
 ![image](https://github.com/user-attachments/assets/b1ed8a6c-8581-463e-a35b-0c810f6f7824)
 
-Quillo is an automated email responder agent that leverages OpenAI's API, the Gmail API, and LangChain to analyze, categorize, and generate responses for incoming emails. The agent orchestrates a sequential pipeline using LangChain's **SequentialChain**, integrating multiple tasks such as summarizing emails, determining if a response is needed, categorizing emails, and drafting responses. It also employs memory modules to maintain historical email context and a vector database (e.g., Pinecone) for contextual retrieval via semantic search.
+Quillo is an automated email responder agent that leverages OpenAI's API, the Gmail API, and LangChain to analyze, categorize, and generate responses for incoming emails. The agent orchestrates a sequential pipeline using LangChain's **SequentialChain**, integrating multiple tasks such as summarizing emails, determining if a response is needed, categorizing emails, and drafting responses. It also employs memory modules to maintain historical email context and a vector database for contextual retrieval via semantic search.
 
 ## Project Structure
 
@@ -15,6 +15,7 @@ root/
 ├── logs                # Log files
 ├── prompts             # Prompt templates for the email tasks
 ├── requirements.txt    # Python dependencies
+├── setup.py            # Package setup configuration
 └── tools               # Utility scripts or tools not directly part of the agent chain
 ```
 
@@ -28,14 +29,14 @@ There are two ways to install Quillo:
 pip install -e .
 ```
 
-This will install the package in development mode with all required dependencies.
+This will install the package in development mode with all required dependencies as defined in `setup.py`.
 
 ### 2. Manual Installation
 
 1. **Clone the Repository:**
     ```bash
-    git clone <repository-url>
-    cd Quillo
+    git clone https://github.com/yourusername/quillo.git
+    cd quillo
     ```
 
 2. **Set Up the Environment:**
@@ -52,37 +53,47 @@ This will install the package in development mode with all required dependencies
 
 ## Configuration
 
-1. **Gmail API Setup:**
-    - Place your Gmail API credentials in `config/credentials.json`
-    - Run the initial setup to authenticate:
-      ```bash
-      python -m libs.google_oauth
-      ```
+### 1. API Keys Setup
 
-2. **Environment Variables:**
-    - Copy the example environment file:
-      ```bash
-      cp .env.example .env
-      ```
-    - Update `.env` with your API keys and settings
+1. **Create API Keys Configuration:**
+   - Navigate to the `config` directory
+   - Copy the template file to create your configuration:
+     ```bash
+     cp config/api_keys.template.json config/api_keys.json
+     ```
+   - Edit `config/api_keys.json` and add your API keys:
+     - OpenAI API key
+     - Google OAuth client credentials
+
+2. **Gmail API Setup:**
+   - Set up a Google Cloud project and enable the Gmail API
+   - Create OAuth 2.0 credentials in the Google Cloud Console
+   - Add the credentials to your `config/api_keys.json` file
+   - Run the initial setup to authenticate:
+     ```bash
+     python -m libs.google_oauth
+     ```
+   - This will create a `token.pickle` file in the `config` directory
+
+3. **Environment Variables:**
+   - Create a `.env` file in the project root:
+     ```bash
+     # Example .env file
+     PYTHONPATH=${PYTHONPATH}:/path/to/your/quillo/installation
+     ```
 
 ## Development Setup
 
-For development work, install additional dependencies:
+For development work, install all dependencies including development packages:
 
 ```bash
-pip install -r requirements.txt[dev]
+pip install -r requirements.txt
 ```
 
-This includes:
-- pytest for testing
-- black for code formatting
-- flake8 for linting
-- mypy for type checking
 
 ## Pipeline Overview
 
-QuilloAI uses LangChain's **SequentialChain** to construct a unified pipeline that processes incoming emails through a series of steps:
+Quillo uses LangChain's **SequentialChain** to construct a unified pipeline that processes incoming emails through a series of steps:
 
 1. **Email Summarizer:** Summarizes the email content and extracts key points.
 2. **Email Analyzer:** Determines whether the email requires a response.
@@ -97,28 +108,36 @@ The pipeline integrates memory modules to preserve context from previous email t
 
 ## Vector Database for Contextual Retrieval
 
-QuilloAI utilizes a vector database (such as Pinecone) to store embeddings of email content. This semantic search capability enables the system to retrieve relevant past emails or interactions based on the underlying meaning of the text, rather than relying solely on keyword matching.
+Quillo utilizes a vector database to store embeddings of email content. This semantic search capability enables the system to retrieve relevant past emails or interactions based on the underlying meaning of the text, rather than relying solely on keyword matching.
 
-## Running the Email Responder Agent
+## Running the Application
 
 To execute the agent from the project's base directory, run:
 
 ```bash
-python -m agents.email_responder_agent
+python -m agents.orchestrator_text_completions
 ```
 
-This command will process incoming emails, enrich them with context, and orchestrate the sequential pipeline to generate responses.
+or for the chat-based version:
 
-Additional Tools and Modules
-    •   Agent Tools:
-The tools/ directory contains various modules for tasks such as archiving emails, sending responses, categorizing emails, and more.
-    •   Prompt Templates:
-All prompt templates are stored in the prompts/ directory. These templates are dynamically loaded by the agents during processing.
+```bash
+python -m agents.orchestrator_chat_prompts
+```
 
-# License
+These commands will process incoming emails, enrich them with context, and orchestrate the sequential pipeline to generate responses.
+
+## Additional Tools and Modules
+
+- **Agent Tools:**
+  The `tools/` directory contains various modules for tasks such as retrieving emails, parsing email content, extracting headers, labeling emails, and more.
+
+- **Prompt Templates:**
+  All prompt templates are stored in the `prompts/` directory. These templates are dynamically loaded by the agents during processing.
+
+## License
 
 This project is licensed under the GPL-3.0 License.
 
-# Contact
+## Contact
 
 For further inquiries or contributions, please contact the project maintainers.
