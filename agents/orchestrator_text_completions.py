@@ -202,11 +202,6 @@ editor_prompt = PromptTemplate(
 )
 editor_chain = editor_prompt | base_model | editor_fixing_parser  # Using reasoning_model
 
-import base64
-import re
-import logging
-from email.mime.text import MIMEText
-from tools.text_cleaner import clean_text
 
 logger = logging.getLogger(__name__)
 
@@ -319,9 +314,10 @@ def orchestrate_email_response():
             needs_response = needs_response_output["needs_response"]
             logger.info("Needs response decision: %s", needs_response)
             
+            
             # Get human feedback on the needs_response decision using our new function
             is_correct, human_input = get_yes_no_feedback(
-                prompt="Is this decision correct?",
+                prompt=None,
                 decision=needs_response,
                 context=summary_result
             )
@@ -368,7 +364,7 @@ def orchestrate_email_response():
             
             # Get human feedback on the category decision
             is_category_correct, _ = get_yes_no_feedback(
-                prompt="Is this category correct?",
+                prompt=None,
                 decision=category,
                 context=None
             )
@@ -392,7 +388,7 @@ def orchestrate_email_response():
                 subject = "Re: " + message_data.get('subject', '')
                 # Create a draft with the response
                 create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
-                print(f"Decline email drafted {final_response}. Check your drafts folder to edit before sending.")
+                print(f"EMAIL SUMMARY:\n{final_response}.\n\nCheck your drafts folder to edit before sending.\n\n")
                 continue
             elif category == "decline" and not is_category_correct:
                 # Categorizer decided to decline but human disagrees
@@ -417,7 +413,7 @@ def orchestrate_email_response():
                 subject = "Re: " + message_data.get('subject', '')
                 # Create a draft with the response
                 create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
-                print(f"Decline email drafted {final_response}. Check your drafts folder to edit before sending.")
+                print(f"EMAIL SUMMARY:\n{final_response}.\n\nCheck your drafts folder to edit before sending.\n\n")
                 # Apply the DECLINE label to the email
                 apply_q_decline_label(retriever.service, message_id)
             
@@ -429,11 +425,10 @@ def orchestrate_email_response():
                 meeting_output = meeting_request_decider_chain.invoke({"email_content": email_content_input})
                 is_meeting_request = meeting_output["decision"]
                 logger.info("Meeting request decision: %s", is_meeting_request)
-                
-                # Get human feedback on meeting request decision
+
                 is_meeting_correct, _ = get_yes_no_feedback(
-                    prompt="Is this meeting request decision correct?",
-                    decision=f"Is meeting request? {is_meeting_request}",
+                    prompt=None,
+                    decision=is_meeting_request,
                     context=f"Email category: {category}"
                 )
                 
@@ -449,13 +444,18 @@ def orchestrate_email_response():
                     
                     # Extract recipient email from the message_data
                     recipient_email = message_data.get('from', {})
-                    subject = "Re: " + message_data.get('subject', '')
+                    
+                    # add Re: to the subject if it's not already there
+                    if "Re:" not in message_data.get('subject',     ''):
+                        subject = "Re: " + message_data.get('subject', '')
+                    else:
+                        subject = message_data.get('subject', '')
                     
                     # Create a draft with the response
                     create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
-                    print(f"Schedule-a-meeting email drafted {final_response}. Check your drafts folder to edit before sending.")
+                    print(f"EMAIL SUMMARY:\n{final_response}\n\nCheck your drafts folder to edit before sending.\n\n")
                     remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
-                    
+
                 else:
                     # Apply the EMAIL label to the email
                     apply_q_response_needed_label(retriever.service, message_id)
@@ -467,10 +467,17 @@ def orchestrate_email_response():
                     
                     # Create a draft with the response
                     create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
-                    print(f"Response email drafted {final_response}. Check your drafts folder to edit before sending.")
+                    print(f"EMAIL SUMMARY:\n{final_response}\n\nCheck your drafts folder to edit before sending.\n\n")
                     remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
 
+            # Get human feedback on whether to move to the next email
+            move_to_next_email = get_yes_no_feedback(prompt="Move to next email?", decision=None, context=None)
+            if move_to_next_email:
+                continue
+            else:
+                break
 
+            
     except Exception as e:
         logger.error("Error in orchestrating email response: %s", str(e))
         raise
