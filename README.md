@@ -1,8 +1,6 @@
 # Quillo
 ![image](https://github.com/user-attachments/assets/b1ed8a6c-8581-463e-a35b-0c810f6f7824)
 
-
-
 Quillo is an automated email responder agent that leverages OpenAI's API, the Gmail API, and LangChain to analyze, categorize, and generate responses for incoming emails. The agent orchestrates a sequential pipeline using LangChain's **SequentialChain**, integrating multiple tasks such as summarizing emails, determining if a response is needed, categorizing emails, and drafting responses. It also employs memory modules to maintain historical email context and a vector database (e.g., Pinecone) for contextual retrieval via semantic search.
 
 ## Project Structure
