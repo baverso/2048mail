@@ -115,6 +115,8 @@ def get_last_n_emails(service, num_threads=50) -> list:
             results = service.users().messages().list(**params).execute()
             msgs = results.get("messages", [])
             
+            logger.info(f"Found {len(msgs)} messages with current label combination")
+            
             if not msgs:
                 logger.info("No messages found with current label combination")
                 break  # No messages found with current label combination
