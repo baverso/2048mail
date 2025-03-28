@@ -1,60 +1,82 @@
 import os
 import json
 import logging
-from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+load_dotenv()
 
 # Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def load_api_keys():
     """
-    Load API keys from configuration file.
-    Looks for config/api_keys.json in the project root directory.
+    Load API keys from the config/api_keys.json file or environment variables.
     
     Returns:
-        dict: Dictionary containing all API keys
+        dict: A dictionary containing API keys.
     """
-    try:
-        # Use Path for cross-platform compatibility
-        config_path = Path(__file__).parent.parent / "config" / "api_keys.json"
-        with open(config_path) as f:
-            keys = json.load(f)
-        return keys
-    except FileNotFoundError:
-        logger.error(
-            "API keys file not found. Please create config/api_keys.json "
-            "using config/api_keys.template.json as a template."
-        )
-        raise
-    except json.JSONDecodeError:
-        logger.error("Invalid JSON in api_keys.json")
-        raise
-
-def setup_openai_api():
-    """
-    Load OpenAI API key and set it as an environment variable.
-    """
-    keys = load_api_keys()
-    if "openai_api_key" in keys:
-        os.environ["OPENAI_API_KEY"] = keys["openai_api_key"]
-        logger.info("OpenAI API key loaded successfully")
-    else:
-        logger.error("OpenAI API key not found in config/api_keys.json")
-        raise KeyError("OpenAI API key not found in config")
+    # Define the path to the API keys file
+    api_keys_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'api_keys.json')
+    
+    # Check if the file exists
+    if os.path.exists(api_keys_path):
+        try:
+            with open(api_keys_path, 'r') as f:
+                keys = json.load(f)
+            logger.info("API keys loaded from file.")
+            return keys
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing API keys file: {e}")
+            # Fall back to environment variables
+    
+    # If file doesn't exist or couldn't be parsed, use environment variables
+    logger.info("Using API keys from environment variables.")
+    return {
+        "openai": {
+            "api_key": os.environ.get("OPENAI_API_KEY")
+        }
+    }
 
 def get_google_api_config():
     """
-    Get Google API configuration from the API keys file.
+    Load Google API configuration from credentials file.
     
     Returns:
-        dict: Google API configuration
+        dict: A dictionary containing Google API configuration.
+    """
+    # Define the path to the Google credentials file
+    google_credentials_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'google_credentials.json')
+    
+    # Check if the file exists
+    if os.path.exists(google_credentials_path):
+        try:
+            with open(google_credentials_path, 'r') as f:
+                config = json.load(f)
+            logger.info("Google API credentials loaded from file.")
+            return config
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing Google credentials file: {e}")
+            raise
+    else:
+        logger.error("Google credentials file not found at: %s", google_credentials_path)
+        raise FileNotFoundError(f"Google credentials file not found at: {google_credentials_path}")
+
+def setup_openai_api():
+    """
+    Set up the OpenAI API by setting the API key in the environment.
     """
     keys = load_api_keys()
-    if "google" in keys:
-        return keys["google"]
+    
+    # Set the OpenAI API key in the environment
+    if "openai" in keys and "api_key" in keys["openai"]:
+        os.environ["OPENAI_API_KEY"] = keys["openai"]["api_key"]
+        logger.info("OpenAI API key set in environment.")
     else:
-        logger.error("Google API configuration not found in config/api_keys.json")
-        raise KeyError("Google API configuration not found in config")
+        # Check if it's already in the environment
+        if not os.environ.get("OPENAI_API_KEY"):
+            logger.warning("OpenAI API key not found in config or environment.")
 
 def setup_all_apis():
     """
@@ -63,8 +85,8 @@ def setup_all_apis():
     keys = load_api_keys()
     
     # Set up OpenAI API
-    if "openai_api_key" in keys:
-        os.environ["OPENAI_API_KEY"] = keys["openai_api_key"]
+    if "openai" in keys and "api_key" in keys["openai"]:
+        os.environ["OPENAI_API_KEY"] = keys["openai"]["api_key"]
         logger.info("OpenAI API key loaded successfully")
     else:
         logger.warning("OpenAI API key not found in config")

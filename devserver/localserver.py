@@ -1,42 +1,85 @@
-from flask import Flask, request, redirect
-from google_auth_oauthlib.flow import Flow
+from flask import Flask, request, redirect, session, url_for
+import os
+import secrets
+from libs.google_oauth import GoogleOAuthService
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.secret_key = secrets.token_hex(16)  # Generate a secure secret key
 
-# Define the scopes you need
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+# Initialize the OAuth service
+oauth_service = GoogleOAuthService(redirect_uri='http://localhost:5000/oauth2callback')
 
 @app.route("/login")
 def login():
-    # Set up the OAuth flow with your client secrets and redirect URI
-    flow = Flow.from_client_secrets_file(
-        'config/client_secret.json',
-        scopes=SCOPES,
-        redirect_uri='http://localhost:5000/oauth2callback'
-    )
-    auth_url, state = flow.authorization_url(
-        access_type='offline',
-        include_granted_scopes='true'
-    )
+    """Start the OAuth flow by redirecting to Google's auth page."""
+    # Check if we already have valid credentials
+    creds = oauth_service.get_credentials()
+    if creds and creds.valid:
+        return redirect(url_for('index', status='already_authenticated'))
+    
+    # Get authorization URL and state
+    auth_url, state, flow = oauth_service.get_authorization_url()
+    
+    # Store the flow in the session for later use
+    session['flow_state'] = state
+    
     return redirect(auth_url)
 
 @app.route("/oauth2callback")
 def oauth2callback():
-    # Recreate the flow to fetch the token using the current request URL
-    flow = Flow.from_client_secrets_file(
-        'config/client_secret.json',
-        scopes=SCOPES,
-        redirect_uri='http://localhost:5000/oauth2callback'
-    )
-    flow.fetch_token(authorization_response=request.url)
-    credentials = flow.credentials
-    # Now you can use the credentials to call the Gmail API
-    return "Authentication successful! You can now use the Gmail API."
+    """Handle the OAuth callback from Google."""
+    try:
+        logger.info("Received callback at /oauth2callback")
+        logger.info(f"Request URL: {request.url}")
+        logger.info(f"Request args: {request.args}")
+        logger.info(f"Session data: {session}")
+        
+        # Check if there's an error in the callback
+        if 'error' in request.args:
+            error = request.args.get('error')
+            logger.error(f"OAuth error: {error}")
+            return f"Authentication failed: {error}"
+        
+        # Recreate the flow with the same redirect URI
+        flow = oauth_service.create_authorization_flow()
+        
+        # Exchange the authorization code for credentials
+        creds = oauth_service.fetch_token_from_response(flow, request.url)
+        
+        logger.info("Successfully obtained credentials")
+        return redirect(url_for('index', status='authentication_successful'))
+    except Exception as e:
+        logger.error(f"Authentication failed: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return f"Authentication failed: {str(e)}"
 
 @app.route('/')
 def index():
-    return "Hello, welcome to the OAuth testing server."
-
+    """Main page that shows authentication status."""
+    status = request.args.get('status', '')
+    
+    creds = oauth_service.get_credentials()
+    is_authenticated = creds and creds.valid
+    
+    if is_authenticated:
+        return """
+        <h1>OAuth Testing Server</h1>
+        <p>Authentication status: <strong>Authenticated</strong></p>
+        <p>You can now use the Gmail API.</p>
+        """
+    else:
+        return """
+        <h1>OAuth Testing Server</h1>
+        <p>Authentication status: <strong>Not authenticated</strong></p>
+        <p><a href="/login">Click here to authenticate with Google</a></p>
+        """
 
 if __name__ == "__main__":
+    # Make sure the port matches your redirect URI
     app.run(debug=True, port=5000)
