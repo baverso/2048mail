@@ -69,9 +69,13 @@ def setup_openai_api():
     """
     keys = load_api_keys()
     
-    # Set the OpenAI API key in the environment
+    # Check for the API key in the expected format
     if "openai" in keys and "api_key" in keys["openai"]:
         os.environ["OPENAI_API_KEY"] = keys["openai"]["api_key"]
+        logger.info("OpenAI API key set in environment.")
+    # Check for direct api_key format
+    elif "api_key" in keys:
+        os.environ["OPENAI_API_KEY"] = keys["api_key"]
         logger.info("OpenAI API key set in environment.")
     else:
         # Check if it's already in the environment

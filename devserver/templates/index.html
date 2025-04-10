@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Quillo Email Management System</title>
+    <script>
+        let socket;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        
+        function connectWebSocket() {
+            socket = new WebSocket(`ws://${window.location.host}/ws`);
+            
+            socket.onopen = function(e) {
+                console.log("WebSocket connection established");
+                document.getElementById('connection-status').textContent = 'Connected';
+                // Reset reconnect attempts on successful connection
+                reconnectAttempts = 0;
+            };
+            
+            socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log("Message received:", data);
+                
+                if (data.type === 'feedback_required') {
+                    const feedbackContainer = document.getElementById('feedback-container');
+                    feedbackContainer.style.display = 'block';
+                    document.getElementById('feedback-prompt').textContent = data.prompt || 'Provide feedback:';
+                    document.getElementById('feedback-decision').textContent = data.decision || '';
+                    document.getElementById('feedback-context').textContent = data.context || '';
+                    
+                    // Ensure feedback container is visible and scroll into view
+                    feedbackContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    
+                    // Flash the feedback container to get attention
+                    flashElement('feedback-container');
+                } else if (data.type === 'status_update') {
+                    updateStatus(data);
+                } else if (data.type === 'feedback_received') {
+                    // Feedback was received and processed
+                    console.log("Feedback received by server:", data);
+                    // Don't hide the feedback container here - let updateStatus handle it
+                }
+            };
+            
+            socket.onclose = function(event) {
+                document.getElementById('connection-status').textContent = 'Disconnected';
+                
+                if (event.wasClean) {
+                    console.log(`Connection closed cleanly, code=${event.code} reason=${event.reason}`);
+                } else {
+                    console.log('Connection died unexpectedly');
+                }
+                
+                // Implement exponential backoff for reconnection
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+                    reconnectAttempts++;
+                    console.log(`Attempting to reconnect in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+                    setTimeout(connectWebSocket, delay);
+                } else {
+                    console.log("Maximum reconnection attempts reached");
+                    alert("Connection to server lost. Please refresh the page to reconnect.");
+                }
+            };
+            
+            socket.onerror = function(error) {
+                console.log(`WebSocket error: ${error.message}`);
+            };
+        }
+        
+        function provideFeedback(value) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    type: 'provide_feedback',
+                    feedback: value
+                }));
+                document.getElementById('feedback-container').style.display = 'none';
+            } else {
+                alert('WebSocket connection is not open. Please refresh the page.');
+            }
+        }
+        
+        function processEmails() {
+            document.getElementById('process-button').disabled = true;
+            document.getElementById('process-button').textContent = 'Processing...';
+            
+            fetch('/process-emails')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Process emails response:', data);
+                    document.getElementById('status').textContent = data.status;
+                    setTimeout(() => {
+                        document.getElementById('process-button').disabled = false;
+                        document.getElementById('process-button').textContent = 'Process Emails';
+                    }, 3000);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('process-button').disabled = false;
+                    document.getElementById('process-button').textContent = 'Process Emails';
+                });
+        }
+        
+        function updateStatus(data) {
+            console.log("updateStatus called with full data:", JSON.stringify(data));
+            document.getElementById('status').textContent = data.status;
+            if (data.results) {
+                document.getElementById('results').textContent = JSON.stringify(data.results, null, 2);
+            }
+            
+            // Check if there's a draft email to display
+            const draftContainer = document.getElementById('draft-container');
+            console.log("Draft container exists:", !!draftContainer);
+            console.log("Draft email present:", !!data.draft_email);
+            
+            if (data.draft_email) {
+                console.log("Showing draft container with subject:", data.draft_subject);
+                console.log("Draft recipient:", data.draft_recipient);
+                console.log("Draft email length:", data.draft_email.length);
+                
+                draftContainer.style.display = 'block';
+                document.getElementById('draft-subject').textContent = data.draft_subject || 'No subject';
+                document.getElementById('draft-recipient').textContent = data.draft_recipient || 'No recipient';
+                document.getElementById('draft-content').textContent = data.draft_email;
+                
+                console.log("Draft container display style:", draftContainer.style.display);
+                console.log("Draft content set:", document.getElementById('draft-content').textContent.substring(0, 20) + "...");
+                
+                // Scroll to the draft container
+                draftContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                console.log("Scrolled to draft container");
+
+                // Only hide feedback container if there's no active feedback request
+                if (!data.feedback_required) {
+                    document.getElementById('feedback-container').style.display = 'none';
+                }
+            }
+            
+            // Update feedback container visibility based on feedback_required status
+            const feedbackContainer = document.getElementById('feedback-container');
+            if (data.feedback_required) {
+                feedbackContainer.style.display = 'block';
+                // Ensure feedback container is visible and scroll into view
+                feedbackContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+            
+            // Enable/disable process button based on status
+            if (data.running) {
+                document.getElementById('process-button').disabled = true;
+                document.getElementById('process-button').textContent = 'Processing...';
+            } else {
+                document.getElementById('process-button').disabled = false;
+                document.getElementById('process-button').textContent = 'Process Emails';
+            }
+            
+            if (data.running && !data.draft_email) {
+                setTimeout(checkStatus, 2000);
+            }
+        }
+        
+        function checkStatus() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    updateStatus(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check if draft container exists
+            const draftContainer = document.getElementById('draft-container');
+            console.log("Draft container exists:", !!draftContainer);
+            if (draftContainer) {
+                console.log("Draft container initial display:", draftContainer.style.display);
+            }
+
+            connectWebSocket();
+            // Poll status every 5 seconds as a fallback
+            setInterval(checkStatus, 5000);
+        });
+    </script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .feedback-container { 
+            display: none; 
+            background-color: #f0f0f0; 
+            padding: 20px; 
+            margin-top: 20px;
+            border-radius: 5px;
+        }
+        .draft-container {
+            display: none;
+            background-color: #f0fff0;
+            padding: 20px;
+            margin-top: 20px;
+            border-radius: 5px;
+            border: 2px solid #cce6cc;
+        }
+        .draft-email {
+            white-space: pre-wrap;
+            background: #ffffff;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            margin-top: 10px;
+        }
+        .notice {
+            background-color: #fffde7;
+            padding: 10px;
+            border-left: 4px solid #ffd600;
+            margin: 10px 0;
+        }
+        button { padding: 10px 20px; margin-right: 10px; }
+        .status-container { margin-top: 20px; }
+        pre { white-space: pre-wrap; background: #f5f5f5; padding: 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Email Management System</h1>
+        <p>WebSocket status: <span id="connection-status">Connecting...</span></p>
+        
+        {% if is_authenticated %}
+            <p>Authentication status: <strong>Authenticated</strong></p>
+            <p>You can now use the Gmail API.</p>
+            <button id="process-button" onclick="processEmails()">Process Emails</button>
+            
+            <div class="status-container">
+                <h2>Status</h2>
+                <p>Current status: <span id="status">idle</span></p>
+                <pre id="results"></pre>
+            </div>
+            
+            <div id="draft-container" class="draft-container" style="border: 3px solid red; min-height: 100px;">
+                <h2>Email Draft Created</h2>
+                <div class="notice">
+                    <p><strong>Note:</strong> This email has been saved to your Gmail drafts folder. You can review and send it at your convenience.</p>
+                </div>
+                <p><strong>To:</strong> <span id="draft-recipient"></span></p>
+                <p><strong>Subject:</strong> <span id="draft-subject"></span></p>
+                <h3>Email Content:</h3>
+                <div id="draft-content" class="draft-email"></div>
+            </div>
+            
+            <div id="feedback-container" class="feedback-container">
+                <h2>Feedback Required</h2>
+                <p id="feedback-prompt">Provide feedback:</p>
+                <p>Decision: <strong id="feedback-decision"></strong></p>
+                <p>Context: <pre id="feedback-context"></pre></p>
+                <button onclick="provideFeedback(true)">Yes</button>
+                <button onclick="provideFeedback(false)">No</button>
+            </div>
+        {% else %}
+            <p>Authentication status: <strong>Not authenticated</strong></p>
+            <p><a href="/login">Click here to authenticate with Google</a></p>
+        {% endif %}
+    </div>
+</body>
+</html>
+            

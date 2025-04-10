@@ -13,6 +13,11 @@ logging.basicConfig(level=logging.INFO)
 # Define the required OAuth scopes. For modifying Gmail (e.g., archiving), we need gmail.modify.
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
+def get_gmail_credentials():
+    """Helper function to get Gmail credentials using the OAuth service."""
+    oauth_service = GoogleOAuthService()
+    return oauth_service.get_credentials()
+
 class GoogleOAuthService:
     def __init__(self, config_dir=None, redirect_uri=None):
         """Initialize the OAuth service with configuration directory and redirect URI."""

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quillo"
+version = "0.0.1"
+description = "Quillo project"
+requires-python = ">=3.9"
+dependencies = [
+    "google-api-python-client>=2.108.0",  # for Gmail API
+    "google-auth-oauthlib>=1.1.0",        # for OAuth flow
+    "email-reply-parser>=0.5.12",         # for parsing email replies
+    "pytz>=2024.1",                       # for timezone handling
+    "langchain-openai>=0.0.5",            # for AI processing
+    "langchain>=0.3.20",                  # for LangChain functionality
+    "langchain-core>=0.3.41",             # for LangChain core components
+    "python-dotenv>=1.0.0",               # for environment variables
+    "fastapi>=0.95.0",                    # for the FastAPI server
+    "uvicorn>=0.21.0",                    # ASGI server for FastAPI
+    "jinja2>=3.1.2",                      # for templates
+    "flask>=2.2.3",                       # for the Flask server
+]
+
+[tool.setuptools]
+packages = ["libs", "tools", "agents", "devserver"] 

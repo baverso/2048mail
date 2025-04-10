@@ -25,7 +25,13 @@ from langchain.output_parsers import OutputFixingParser
 from tools.email_retriever import EmailRetriever
 from tools.email_parser import EmailParser
 from libs.api_manager import setup_openai_api
-from tools.human_feedback import get_yes_no_feedback
+
+# Import the new web feedback module
+from tools.web_feedback import get_yes_no_feedback, get_feedback_with_options
+
+# Only import the CLI feedback as fallback
+from tools.human_feedback import get_yes_no_feedback as cli_get_yes_no_feedback
+
 from tools.email_label_remover import remove_email_label
 from tools.email_labeler import *
 
@@ -206,68 +212,78 @@ editor_chain = editor_prompt | base_model | editor_fixing_parser  # Using reason
 logger = logging.getLogger(__name__)
 
 def create_draft(service, message_text, to, subject, thread_id=None, from_email=None):
-    """
-    Create a draft email in Gmail, optionally associating it with an existing thread.
-    
-    Args:
-        service: The Gmail API service instance.
-        message_text: The body of the email (including the email chain if desired).
-        to: The recipient's email address.
-        subject: The subject of the email.
-        thread_id: The Gmail threadId to associate this draft with (optional).
-        from_email: The sender's email address (optional).
-        
-    Returns:
-        The created draft object.
-    """
+    """Create and insert a draft email message."""
     try:
-        # Create a MIMEText message with the email body (including email chain)
-        message = MIMEText(message_text)
-        message['to'] = to
-        message['subject'] = subject
+        if isinstance(to, dict) and 'email' in to:
+            to_email = to['email']
+        elif isinstance(to, str):
+            to_email = to
+        else:
+            logger.error(f"Invalid 'to' parameter: {to}")
+            return None
+
+        msg = MIMEText(message_text)
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        
+        # Set the From field if provided
         if from_email:
-            message['from'] = from_email
+            msg['From'] = from_email
         
-        # Optionally, include headers that help indicate the message is part of a thread.
+        # Convert the message to a base64 encoded string
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        
+        # Create the draft message with JSON object
+        draft = {'message': {'raw': raw}}
+        
+        # Add thread ID if provided
         if thread_id:
-            # Although threadId is sent in the API request, it may be useful to add an
-            # "In-Reply-To" header if you have the original message-id.
-            message['In-Reply-To'] = thread_id
-
-        # Encode the message
-        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+            draft['message']['threadId'] = thread_id
         
-        # Build the request body with the optional threadId included
-        body = {
-            'message': {
-                'raw': raw_message
-            }
+        # Call the Gmail API to create the draft
+        draft = service.users().drafts().create(userId='me', body=draft).execute()
+        
+        logger.info(f"Draft created successfully with ID: {draft.get('id')}")
+        
+        # Create the return structure and log it for debugging
+        draft_result = {
+            "draft_id": draft.get('id'),
+            "draft_email": message_text,
+            "draft_subject": subject,
+            "draft_recipient": to_email,
+            "thread_id": thread_id
         }
-        if thread_id:
-            body['message']['threadId'] = thread_id
         
-        # Create the draft using the Gmail API
-        draft = service.users().drafts().create(
-            userId='me',
-            body=body
-        ).execute()
+        logger.info(f"Draft result keys: {list(draft_result.keys())}")
+        logger.info(f"Draft email length: {len(draft_result['draft_email'])}")
+        logger.info(f"Draft subject: {draft_result['draft_subject']}")
+        logger.info(f"Draft recipient: {draft_result['draft_recipient']}")
         
-        logger.info("Draft created successfully with ID: %s", draft['id'])
-        return draft
-    except Exception as error:
-        logger.error("An error occurred while creating the draft: %s", error)
-        raise
+        return draft_result
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+        return None
 
-def orchestrate_email_response():
+def orchestrate_email_response(user_id=None, draft_callback=None):
     """
     Orchestrates the processing of incoming emails by retrieving raw email threads,
     parsing them into a structured format, and then passing them through LangChain agents
     to generate the appropriate email response.
 
+    Args:
+        user_id (str, optional): The ID of the user requesting the email processing.
+            This is used to send feedback requests to the correct user.
+        draft_callback (callable, optional): A callback function that will be called
+            whenever a draft email is created. The callback should accept a dictionary
+            containing the draft details.
+
     Returns:
-        str or dict: The final email response or, if human-edited feedback exists,
-                     a dict containing both the final response and the editor analysis.
+        dict or str: A dictionary containing results including any draft emails,
+                     or a string message if no emails were processed
     """
+    # If user_id is provided, use the web feedback; otherwise, fall back to CLI
+    feedback_func = get_yes_no_feedback if user_id else cli_get_yes_no_feedback
+    
     try:
         # Retrieve raw emails using EmailRetriever.
         retriever = EmailRetriever()
@@ -285,9 +301,19 @@ def orchestrate_email_response():
             logger.info("No recent emails (order=1) found to process.")
             return "No emails to process."
         
+        # To track results across all processed emails
+        results = {
+            "emails_processed": 0,
+            "emails_responded": 0,
+            "emails_archived": 0,
+            "latest_draft": None
+        }
+        
         # Process each recent email
         for i, email_data in enumerate(recent_emails):
             print('Processing email {} of {}'.format(i+1, len(recent_emails)))
+            results["emails_processed"] += 1
+            
             # Get the message_data if it exists, otherwise use the email_data directly
             if 'message_data' in email_data:
                 message_data = email_data['message_data']
@@ -315,11 +341,12 @@ def orchestrate_email_response():
             logger.info("Needs response decision: %s", needs_response)
             
             
-            # Get human feedback on the needs_response decision using our new function
-            is_correct, human_input = get_yes_no_feedback(
+            # Get human feedback on the needs_response decision using our feedback function
+            is_correct, human_input = feedback_func(
                 prompt=None,
                 decision=needs_response,
-                context=summary_result
+                context=summary_result,
+                user_id=user_id
             )
             
             # Handle the four conditional cases
@@ -337,6 +364,7 @@ def orchestrate_email_response():
                 remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
                 apply_q_archive_label(retriever.service, message_id)    
                 print("Human decided no response is needed. Email archived.")
+                results["emails_archived"] += 1
                 continue
             elif needs_response == "no response needed" and is_correct:
                 # AI decided not to respond and human agrees
@@ -348,6 +376,7 @@ def orchestrate_email_response():
                 remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
                 apply_q_archive_label(retriever.service, message_id)    
                 print("Human decided no response is needed. Email archived.")
+                results["emails_archived"] += 1
                 continue
             elif needs_response == "no response needed" and not is_correct:
                 # AI decided not to respond but human disagrees
@@ -363,10 +392,11 @@ def orchestrate_email_response():
             logger.info("Email categorizer decision: %s", category)
             
             # Get human feedback on the category decision
-            is_category_correct, _ = get_yes_no_feedback(
+            is_category_correct, _ = feedback_func(
                 prompt=None,
                 decision=category,
-                context=None
+                context=None,
+                user_id=user_id
             )
             
             # Handle the four conditional cases for categorization
@@ -383,12 +413,30 @@ def orchestrate_email_response():
                 remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
                 apply_q_archive_label(retriever.service, message_id)    
                 print("Human decided to decline. Email archived.")
+                results["emails_archived"] += 1
+                
                 # Extract recipient email from the message_data
                 recipient_email = message_data.get('from', {})
                 subject = "Re: " + message_data.get('subject', '')
                 # Create a draft with the response
-                create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
+                draft_result = create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
                 print(f"EMAIL SUMMARY:\n{final_response}.\n\nCheck your drafts folder to edit before sending.\n\n")
+                results["emails_responded"] += 1
+                results["latest_draft"] = draft_result
+                
+                # Call the draft callback if provided
+                if draft_callback and draft_result:
+                    callback_data = {
+                        "summary": f"Processed {results['emails_processed']} emails. Responded to {results['emails_responded']} and archived {results['emails_archived']}.",
+                        "draft_email": draft_result.get("draft_email"),
+                        "draft_subject": draft_result.get("draft_subject"),
+                        "draft_recipient": draft_result.get("draft_recipient"),
+                        "draft_id": draft_result.get("draft_id"),
+                        "details": results
+                    }
+                    draft_callback(callback_data)
+                
+                # Continue to the next email instead of returning
                 continue
             elif category == "decline" and not is_category_correct:
                 # Categorizer decided to decline but human disagrees
@@ -412,10 +460,25 @@ def orchestrate_email_response():
                 recipient_email = message_data.get('from', {})
                 subject = "Re: " + message_data.get('subject', '')
                 # Create a draft with the response
-                create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
+                draft_result = create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
                 print(f"EMAIL SUMMARY:\n{final_response}.\n\nCheck your drafts folder to edit before sending.\n\n")
-                # Apply the DECLINE label to the email
-                apply_q_decline_label(retriever.service, message_id)
+                results["emails_responded"] += 1
+                results["latest_draft"] = draft_result
+                
+                # Call the draft callback if provided
+                if draft_callback and draft_result:
+                    callback_data = {
+                        "summary": f"Processed {results['emails_processed']} emails. Responded to {results['emails_responded']} and archived {results['emails_archived']}.",
+                        "draft_email": draft_result.get("draft_email"),
+                        "draft_subject": draft_result.get("draft_subject"),
+                        "draft_recipient": draft_result.get("draft_recipient"),
+                        "draft_id": draft_result.get("draft_id"),
+                        "details": results
+                    }
+                    draft_callback(callback_data)
+                
+                # Continue to the next email instead of returning
+                continue
             
             # If we reach here, we need to proceed to the meeting request decider
             if category != "decline":
@@ -426,10 +489,11 @@ def orchestrate_email_response():
                 is_meeting_request = meeting_output["decision"]
                 logger.info("Meeting request decision: %s", is_meeting_request)
 
-                is_meeting_correct, _ = get_yes_no_feedback(
+                is_meeting_correct, _ = feedback_func(
                     prompt=None,
                     decision=is_meeting_request,
-                    context=f"Email category: {category}"
+                    context=f"Email category: {category}",
+                    user_id=user_id
                 )
                 
                 if not is_meeting_correct:
@@ -452,9 +516,26 @@ def orchestrate_email_response():
                         subject = message_data.get('subject', '')
                     
                     # Create a draft with the response
-                    create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
+                    draft_result = create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
                     print(f"EMAIL SUMMARY:\n{final_response}\n\nCheck your drafts folder to edit before sending.\n\n")
                     remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
+                    results["emails_responded"] += 1
+                    results["latest_draft"] = draft_result
+                    
+                    # Call the draft callback if provided
+                    if draft_callback and draft_result:
+                        callback_data = {
+                            "summary": f"Processed {results['emails_processed']} emails. Responded to {results['emails_responded']} and archived {results['emails_archived']}.",
+                            "draft_email": draft_result.get("draft_email"),
+                            "draft_subject": draft_result.get("draft_subject"),
+                            "draft_recipient": draft_result.get("draft_recipient"),
+                            "draft_id": draft_result.get("draft_id"),
+                            "details": results
+                        }
+                        draft_callback(callback_data)
+                    
+                    # Continue to the next email instead of returning
+                    continue
 
                 else:
                     # Apply the EMAIL label to the email
@@ -466,17 +547,70 @@ def orchestrate_email_response():
                     subject = "Re: " + message_data.get('subject', '')
                     
                     # Create a draft with the response
-                    create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
+                    draft_result = create_draft(retriever.service, final_response, recipient_email, subject, message_data.get('threadId'))
                     print(f"EMAIL SUMMARY:\n{final_response}\n\nCheck your drafts folder to edit before sending.\n\n")
                     remove_email_label(retriever.service, message_id, label_ids=['INBOX','UNREAD'])
+                    results["emails_responded"] += 1
+                    results["latest_draft"] = draft_result
+                    
+                    # Call the draft callback if provided
+                    if draft_callback and draft_result:
+                        callback_data = {
+                            "summary": f"Processed {results['emails_processed']} emails. Responded to {results['emails_responded']} and archived {results['emails_archived']}.",
+                            "draft_email": draft_result.get("draft_email"),
+                            "draft_subject": draft_result.get("draft_subject"),
+                            "draft_recipient": draft_result.get("draft_recipient"),
+                            "draft_id": draft_result.get("draft_id"),
+                            "details": results
+                        }
+                        draft_callback(callback_data)
+                    
+                    # Continue to the next email instead of returning
+                    continue
 
             # Get human feedback on whether to move to the next email
-            move_to_next_email = get_yes_no_feedback(prompt="Move to next email?", decision=None, context=None)
+            move_to_next_email, _ = feedback_func(
+                prompt="Move to next email?", 
+                decision=None, 
+                context=None,
+                user_id=user_id
+            )
+            
             if move_to_next_email:
                 continue
             else:
                 break
 
+        # Return the results of the email processing
+        if results["latest_draft"]:
+            # If we created drafts, include the draft info in the results
+            return_data = {
+                "summary": f"Processed {results['emails_processed']} emails. Responded to {results['emails_responded']} and archived {results['emails_archived']}.",
+                "draft_email": results["latest_draft"].get("draft_email"),
+                "draft_subject": results["latest_draft"].get("draft_subject"),
+                "draft_recipient": results["latest_draft"].get("draft_recipient"),
+                "draft_id": results["latest_draft"].get("draft_id"),
+                "details": results
+            }
+            # Add logging to verify the draft email is included
+            logger.info(f"Returning data with keys: {list(return_data.keys())}")
+            logger.info(f"Draft email present: {'draft_email' in return_data}")
+            if 'draft_email' in return_data:
+                logger.info(f"Draft email length: {len(return_data['draft_email'])}")
+                logger.info(f"Draft email content (first 100 chars): {return_data['draft_email'][:100]}")
+            
+            # Verify the top-level fields match the nested latest_draft fields
+            logger.info("Verifying consistency between top-level fields and nested latest_draft:")
+            top_draft_email = return_data.get("draft_email")
+            nested_draft_email = results["latest_draft"].get("draft_email")
+            logger.info(f"Top-level draft_email length: {len(top_draft_email) if top_draft_email else 0}")
+            logger.info(f"Nested draft_email length: {len(nested_draft_email) if nested_draft_email else 0}")
+            logger.info(f"Email lengths match: {len(top_draft_email) == len(nested_draft_email) if top_draft_email and nested_draft_email else False}")
+            
+            return return_data
+        else:
+            # If no drafts were created, just return the summary
+            return f"Processed {results['emails_processed']} emails. Responded to {results['emails_responded']} and archived {results['emails_archived']}."
             
     except Exception as e:
         logger.error("Error in orchestrating email response: %s", str(e))
